@@ -1,0 +1,20 @@
+waha:
+  base_url: "https://waha.example.com"
+  api_key: "REPLACE_ME"
+
+mcp:
+  url: "https://waha.example.com/mcp"
+  api_key: "REPLACE_ME"
+
+llm:
+  provider: "anthropic"
+  model: "claude-sonnet-5"
+  api_key: "REPLACE_ME"
+
+behavior:
+  default_inactivity_minutes: 10
+  max_thread_lifetime_minutes: 240
+
+storage:
+  db_path: "data/monitor.db"
+  tickets_dir: "tickets"
