@@ -40,7 +40,7 @@ def test_groups_exclude_marks_group_excluded(tmp_path, monkeypatch):
     assert row[0] == 1
 
 
-def test_needs_review_list_prints_flagged_threads(tmp_path, monkeypatch):
+def test_needs_review_list_prints_flagged_threads(tmp_path, capsys, monkeypatch):
     from datetime import datetime, timezone
     from monitor.threads import Message, mark_needs_review, upsert_message
 
@@ -54,4 +54,9 @@ def test_needs_review_list_prints_flagged_threads(tmp_path, monkeypatch):
 
     monkeypatch.setenv("MONITOR_DB_PATH", db_path)
     exit_code = main(["needs-review", "list"])
+
+    captured = capsys.readouterr()
     assert exit_code == 0
+    assert "1@g.us" in captured.out
+    assert "s1" in captured.out
+    assert "Juan" in captured.out
