@@ -27,11 +27,11 @@ CREATE TABLE IF NOT EXISTS seen_messages (
 """
 
 
-def get_connection(db_path: str) -> sqlite3.Connection:
+def get_connection(db_path: str, check_same_thread: bool = True) -> sqlite3.Connection:
     parent = os.path.dirname(db_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    return sqlite3.connect(db_path)
+    return sqlite3.connect(db_path, check_same_thread=check_same_thread)
 
 
 def init_db(conn: sqlite3.Connection) -> None:
