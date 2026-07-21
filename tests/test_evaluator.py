@@ -55,3 +55,22 @@ def test_deep_evaluate_parses_not_ticket_worthy_response():
     decision = deep_evaluate(llm, mcp_context="", thread=make_thread())
 
     assert decision.ticket_worthy is False
+
+
+def test_deep_evaluate_parses_multiline_problema():
+    """Verify that multi-line PROBLEMA values are captured in full, not truncated."""
+    llm = FakeLLM(
+        "TICKET: SI\n"
+        "RESUMEN: Cliente reporta un problema.\n"
+        "PROBLEMA: La factura llego con el monto equivocado.\n"
+        "Ademas el cliente menciona que ya llamo antes\n"
+        "sin recibir respuesta."
+    )
+
+    decision = deep_evaluate(llm, mcp_context="Sin contexto adicional.", thread=make_thread())
+
+    assert decision.ticket_worthy is True
+    assert decision.summary == "Cliente reporta un problema."
+    # Verify both first and continuation lines are present
+    assert "monto equivocado" in decision.problem_description
+    assert "sin recibir respuesta" in decision.problem_description

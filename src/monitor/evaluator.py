@@ -41,11 +41,46 @@ def deep_evaluate(llm, mcp_context: str, thread: ThreadRecord) -> TicketDecision
     response = llm.generate(prompt)
 
     fields = {"TICKET": "", "RESUMEN": "", "PROBLEMA": ""}
-    for line in response.splitlines():
+    lines = response.splitlines()
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        key_found = False
+
         for key in fields:
             prefix = f"{key}:"
             if line.strip().upper().startswith(prefix):
-                fields[key] = line.split(":", 1)[1].strip()
+                # Extract text after the colon on this line
+                value_part = line.split(":", 1)[1].strip()
+                accumulated_value = [value_part] if value_part else []
+
+                # Look ahead for continuation lines (until next key or end)
+                j = i + 1
+                while j < len(lines):
+                    next_line = lines[j]
+                    # Check if this line starts with any key marker
+                    is_key_line = False
+                    for k in fields:
+                        if next_line.strip().upper().startswith(f"{k}:"):
+                            is_key_line = True
+                            break
+
+                    if is_key_line:
+                        # This is the start of the next field, stop accumulating
+                        break
+                    else:
+                        # This is a continuation line
+                        accumulated_value.append(next_line.strip())
+                        j += 1
+
+                fields[key] = "\n".join(accumulated_value)
+                i = j  # Move to the next unprocessed line
+                key_found = True
+                break
+
+        if not key_found:
+            i += 1
 
     return TicketDecision(
         ticket_worthy=fields["TICKET"].strip().upper().startswith("SI"),
