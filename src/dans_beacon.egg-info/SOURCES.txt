@@ -1,8 +1,0 @@
-pyproject.toml
-src/dans_beacon.egg-info/PKG-INFO
-src/dans_beacon.egg-info/SOURCES.txt
-src/dans_beacon.egg-info/dependency_links.txt
-src/dans_beacon.egg-info/requires.txt
-src/dans_beacon.egg-info/top_level.txt
-src/monitor/__init__.py
-tests/test_config.py
