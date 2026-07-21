@@ -22,8 +22,8 @@ def write_ticket(
     now: datetime,
 ) -> str:
     date_str = now.strftime("%Y-%m-%d")
-    first_message_id = thread.messages[0].message_id if thread.messages else ""
-    folder_name = f"{date_str}_{_slugify(group_name)}_{_slugify(thread.sender_name)}_{thread.sender_id}_{first_message_id}"
+    last_message_id = thread.messages[-1].message_id if thread.messages else ""
+    folder_name = f"{date_str}_{_slugify(group_name)}_{_slugify(thread.sender_name)}_{thread.sender_id}_{last_message_id}"
     folder_name = _slugify(folder_name)
     folder_path = os.path.join(tickets_dir, folder_name)
     os.makedirs(folder_path, exist_ok=True)

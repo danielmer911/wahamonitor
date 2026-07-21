@@ -70,12 +70,18 @@ def test_write_ticket_folder_name_includes_date_group_and_sender(tmp_path):
 
 
 def test_write_ticket_same_day_different_thread_produces_different_folders(tmp_path):
-    """Test that two different threads for the same sender/group/day create separate ticket folders."""
+    """Test that re-ticketing with accumulated messages produces separate folders.
+
+    This tests the real scenario: a thread has ONE row per (group_id, sender_id) forever.
+    Messages accumulate in the messages array via upsert_message appending.
+    When re-ticketed after new messages arrive, the thread's message list has grown,
+    so the LAST message ID (messages[-1]) differs, producing a different folder name.
+    """
     decision = TicketDecision(True, "resumen", "problema")
     now = datetime(2026, 7, 21, 10, 5, tzinfo=timezone.utc)
 
-    # First thread with message m1
-    thread1 = ThreadRecord(
+    # First ticketing: thread with only message m1
+    thread_first_ticketing = ThreadRecord(
         group_id="1@g.us",
         sender_id="521555@c.us",
         sender_name="Juan Perez",
@@ -86,33 +92,37 @@ def test_write_ticket_same_day_different_thread_produces_different_folders(tmp_p
         deadline_at="2026-07-21T10:10:00+00:00",
     )
 
-    # Second thread with message m2 (same sender/group, but different first message_id)
-    thread2 = ThreadRecord(
+    # Second ticketing: same thread but with m2 appended (simulating upsert_message)
+    # The key point: it's the same sender/group (so same row), but messages array has grown
+    thread_second_ticketing = ThreadRecord(
         group_id="1@g.us",
         sender_id="521555@c.us",
         sender_name="Juan Perez",
         messages=[
+            Message("m1", "First complaint", None, "2026-07-21T10:00:00+00:00"),
             Message("m2", "Second separate complaint", None, "2026-07-21T10:30:00+00:00"),
         ],
         last_activity_at="2026-07-21T10:30:00+00:00",
         deadline_at="2026-07-21T10:40:00+00:00",
     )
 
-    folder1 = write_ticket(str(tmp_path), "Soporte Acme", thread1, decision, FakeWahaClient(), now)
-    folder2 = write_ticket(str(tmp_path), "Soporte Acme", thread2, decision, FakeWahaClient(), now)
+    folder1 = write_ticket(str(tmp_path), "Soporte Acme", thread_first_ticketing, decision, FakeWahaClient(), now)
+    folder2 = write_ticket(str(tmp_path), "Soporte Acme", thread_second_ticketing, decision, FakeWahaClient(), now)
 
     # Both folders should exist and be different
-    assert folder1 != folder2
-    assert os.path.isfile(os.path.join(folder1, "ticket.md"))
-    assert os.path.isfile(os.path.join(folder2, "ticket.md"))
+    # (using messages[-1] ensures this: m1 vs m2 as the last message produces different folder names)
+    assert folder1 != folder2, f"Expected different folder names, but got {folder1} and {folder2}"
+    assert os.path.isfile(os.path.join(folder1, "ticket.md")), f"First ticket missing at {folder1}"
+    assert os.path.isfile(os.path.join(folder2, "ticket.md")), f"Second ticket missing at {folder2}"
 
-    # Check content is different
+    # Check content includes both messages from the second ticketing
     with open(os.path.join(folder1, "ticket.md"), "r", encoding="utf-8") as f:
         content1 = f.read()
     with open(os.path.join(folder2, "ticket.md"), "r", encoding="utf-8") as f:
         content2 = f.read()
 
     assert "First complaint" in content1
+    assert "First complaint" in content2, "Second ticketing should include all accumulated messages"
     assert "Second separate complaint" in content2
 
 
