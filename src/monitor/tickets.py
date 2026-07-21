@@ -1,3 +1,4 @@
+import mimetypes
 import os
 import re
 from datetime import datetime
@@ -21,7 +22,8 @@ def write_ticket(
     now: datetime,
 ) -> str:
     date_str = now.strftime("%Y-%m-%d")
-    folder_name = f"{date_str}_{_slugify(group_name)}_{_slugify(thread.sender_name)}_{thread.sender_id}"
+    first_message_id = thread.messages[0].message_id if thread.messages else ""
+    folder_name = f"{date_str}_{_slugify(group_name)}_{_slugify(thread.sender_name)}_{thread.sender_id}_{first_message_id}"
     folder_name = _slugify(folder_name)
     folder_path = os.path.join(tickets_dir, folder_name)
     os.makedirs(folder_path, exist_ok=True)
@@ -55,7 +57,21 @@ def write_ticket(
     for index, message in enumerate(media_messages, start=1):
         media_url = message.media["url"]
         data = waha_client.download_media(media_url)
-        extension = os.path.splitext(media_url)[1] or ".bin"
+
+        # Prefer extension from mimetype if available
+        mimetype = message.media.get("mimetype")
+        extension = None
+        if mimetype:
+            extension = mimetypes.guess_extension(mimetype)
+
+        # Fall back to extension from URL if mimetype didn't work
+        if not extension:
+            extension = os.path.splitext(media_url)[1]
+
+        # Final fallback to .bin
+        if not extension:
+            extension = ".bin"
+
         media_filename = f"adjunto_{index}{extension}"
         with open(os.path.join(folder_path, media_filename), "wb") as f:
             f.write(data)
