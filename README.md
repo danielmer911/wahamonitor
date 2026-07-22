@@ -12,7 +12,7 @@ Read-only against WhatsApp — no outbound messages are sent.
 2. `pip install -e ".[dev]"`
 3. `pytest` — runs the full automated test suite (all external services are
    mocked; no live WAHA/LLM calls happen here).
-4. `uvicorn monitor.main:app --reload` — run the service locally.
+4. `uvicorn monitor.main:app_factory --factory --reload` — run the service locally.
 5. Point your WAHA instance's webhook at `http://<host>:8000/webhook/waha`.
 
 ## Manual production verification

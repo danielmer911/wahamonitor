@@ -13,4 +13,4 @@ ENV MONITOR_DB_PATH=/app/data/monitor.db
 
 EXPOSE 8000
 
-CMD ["uvicorn", "monitor.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "monitor.main:app_factory", "--factory", "--host", "0.0.0.0", "--port", "8000"]

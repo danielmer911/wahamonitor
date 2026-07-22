@@ -1,5 +1,4 @@
 import threading
-import time
 from datetime import datetime, timezone
 
 from monitor.config import load_config
@@ -46,9 +45,12 @@ def create_full_app(config_path: str, start_background_scheduler: bool = True):
     return app
 
 
-app = None
-if __name__ == "monitor.main":
-    try:
-        app = create_full_app("config.yaml")
-    except FileNotFoundError:
-        app = None
+def app_factory():
+    """Factory function for uvicorn to instantiate the FastAPI app.
+
+    This ensures the app is only created when explicitly requested by uvicorn,
+    not as a side effect of importing this module. This prevents unintended
+    side effects (real HTTP calls, DB writes) during test collection or other
+    import-time operations.
+    """
+    return create_full_app("config.yaml")
