@@ -81,6 +81,24 @@ def test_webhook_ignores_excluded_group(tmp_path):
     assert row[0] == 0
 
 
+def test_webhook_ignores_payload_missing_message_id(tmp_path):
+    app, conn = make_app(tmp_path)
+    client = TestClient(app)
+
+    payload = waha_payload()
+    del payload["payload"]["id"]
+
+    response = client.post("/webhook/waha", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ignored"
+    row = conn.execute(
+        "SELECT COUNT(*) FROM threads WHERE group_id = ? AND sender_id = ?",
+        ("1@g.us", "521555@c.us"),
+    ).fetchone()
+    assert row[0] == 0
+
+
 def test_webhook_deduplicates_repeated_message_id(tmp_path):
     app, conn = make_app(tmp_path)
     client = TestClient(app)

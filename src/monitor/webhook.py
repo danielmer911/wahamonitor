@@ -24,11 +24,15 @@ def create_app(conn, config, llm) -> FastAPI:
         if not group_id or not sender_id:
             return {"status": "ignored", "reason": "missing group or sender"}
 
+        message_id = payload.get("id")
+        if not message_id:
+            return {"status": "ignored", "reason": "missing message id"}
+
         if is_excluded(conn, group_id):
             return {"status": "ignored", "reason": "group excluded"}
 
         message = Message(
-            message_id=payload["id"],
+            message_id=message_id,
             text=payload.get("body", ""),
             media=payload.get("media"),
             timestamp=datetime.fromtimestamp(payload.get("timestamp", 0), tz=timezone.utc).isoformat(),
