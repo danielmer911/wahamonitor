@@ -15,6 +15,37 @@ Read-only against WhatsApp — no outbound messages are sent.
 4. `uvicorn monitor.main:app_factory --factory --reload` — run the service locally.
 5. Point your WAHA instance's webhook at `http://<host>:8000/webhook/waha`.
 
+## Docker
+
+The image only bundles `config.example.yaml` (placeholder credentials) — it
+does **not** ship a real `config.yaml`, since that file holds live WAHA/MCP/LLM
+API keys and should never be baked into an image. Before `docker run` will
+work you must create your own `config.yaml` (see Setup step 1) and mount it
+into the container:
+
+```
+docker build -t dans-beacon .
+docker run -d \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/tickets:/app/tickets \
+  -p 8000:8000 \
+  dans-beacon
+```
+
+Without the `config.yaml` mount, the process fails at startup with
+`FileNotFoundError: Config file not found: config.yaml`.
+
+**DB path**: the Dockerfile sets `MONITOR_DB_PATH=/app/data/monitor.db`. Both
+the running service (`monitor.main`) and `python -m monitor.cli` read this
+environment variable, and when it is set it always wins over whatever
+`storage.db_path` says in your mounted `config.yaml` — this guarantees the
+service and the CLI operate on the same SQLite file even if the two disagree.
+If you don't set `MONITOR_DB_PATH`, the service falls back to `config.yaml`'s
+`storage.db_path` and the CLI falls back to `data/monitor.db`. In Docker,
+just rely on `MONITOR_DB_PATH` (already set for you) rather than changing
+`storage.db_path` in your mounted config, to avoid the two diverging.
+
 ## Manual production verification
 
 Automated tests mock WAHA, the MCP server, and the LLM provider. Before

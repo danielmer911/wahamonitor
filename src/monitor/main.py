@@ -1,3 +1,4 @@
+import os
 import threading
 from datetime import datetime, timezone
 
@@ -5,7 +6,7 @@ from monitor.config import load_config
 from monitor.db import get_connection, init_db
 from monitor.groups import list_groups, sync_groups
 from monitor.llm.factory import get_provider
-from monitor.scheduler import process_due_threads
+from monitor.scheduler import archive_stale_threads, process_due_threads
 from monitor.waha_client import WahaClient
 from monitor.webhook import create_app
 
@@ -15,13 +16,20 @@ SCHEDULER_INTERVAL_SECONDS = 30
 def _run_scheduler_loop(conn, config, waha_client, llm, stop_event: threading.Event):
     while not stop_event.is_set():
         group_name_lookup = {g["group_id"]: g["name"] for g in list_groups(conn)}
-        process_due_threads(conn, config, waha_client, llm, group_name_lookup, datetime.now(timezone.utc))
+        now = datetime.now(timezone.utc)
+        process_due_threads(conn, config, waha_client, llm, group_name_lookup, now)
+        archive_stale_threads(conn, config, now)
         sync_groups(conn, waha_client)
         stop_event.wait(SCHEDULER_INTERVAL_SECONDS)
 
 
 def create_full_app(config_path: str, start_background_scheduler: bool = True):
     config = load_config(config_path)
+
+    db_path_override = os.environ.get("MONITOR_DB_PATH")
+    if db_path_override:
+        config.db_path = db_path_override
+
     conn = get_connection(config.db_path, check_same_thread=False)
     init_db(conn)
 
