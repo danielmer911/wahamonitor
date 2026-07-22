@@ -49,7 +49,7 @@ def test_needs_review_list_prints_flagged_threads(tmp_path, capsys, monkeypatch)
     init_db(conn)
     now = datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc)
     upsert_message(conn, "1@g.us", "s1", "Juan", Message("m1", "Hola", None, now.isoformat()), now, 10)
-    mark_needs_review(conn, "1@g.us", "s1")
+    mark_needs_review(conn, "1@g.us", "s1", now, 10)
     conn.close()
 
     monkeypatch.setenv("MONITOR_DB_PATH", db_path)

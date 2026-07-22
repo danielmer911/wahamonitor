@@ -2,7 +2,14 @@ from datetime import datetime
 
 from monitor.evaluator import deep_evaluate
 from monitor.mcp_client import fetch_context
-from monitor.threads import get_due_threads, mark_needs_review, mark_ticketed, reset_deadline
+from monitor.threads import (
+    archive_thread,
+    get_due_threads,
+    get_stale_threads,
+    mark_needs_review,
+    mark_ticketed,
+    reset_deadline,
+)
 from monitor.tickets import write_ticket
 
 
@@ -20,7 +27,16 @@ def process_due_threads(conn, config, waha_client, llm, group_name_lookup: dict,
             else:
                 reset_deadline(conn, thread.group_id, thread.sender_id, now, config.default_inactivity_minutes)
         except Exception:
-            mark_needs_review(conn, thread.group_id, thread.sender_id)
+            mark_needs_review(conn, thread.group_id, thread.sender_id, now, config.default_inactivity_minutes)
             continue
 
     return len(due_threads)
+
+
+def archive_stale_threads(conn, config, now: datetime) -> int:
+    stale_threads = get_stale_threads(conn, now, config.max_thread_lifetime_minutes)
+
+    for thread in stale_threads:
+        archive_thread(conn, thread.group_id, thread.sender_id)
+
+    return len(stale_threads)

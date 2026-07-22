@@ -3,7 +3,9 @@ from datetime import datetime, timedelta, timezone
 from monitor.db import get_connection, init_db
 from monitor.threads import (
     Message,
+    archive_thread,
     get_due_threads,
+    get_stale_threads,
     mark_needs_review,
     mark_ticketed,
     reset_deadline,
@@ -95,12 +97,84 @@ def test_reset_deadline_pushes_thread_out_of_due_list(tmp_path):
     assert due == []
 
 
-def test_mark_needs_review_does_not_remove_from_due_list(tmp_path):
+def test_mark_needs_review_pushes_deadline_out_of_due_list(tmp_path):
     conn = make_conn(tmp_path)
     now = datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc)
     upsert_message(conn, "g1", "s1", "Juan", Message("m1", "Hola", None, now.isoformat()), now, inactivity_minutes=10)
 
-    mark_needs_review(conn, "g1", "s1")
+    due_at = now + timedelta(minutes=11)
+    mark_needs_review(conn, "g1", "s1", due_at, inactivity_minutes=10)
 
+    # Immediately after being marked, the thread should NOT reappear (backoff applied)
+    due = get_due_threads(conn, due_at)
+    assert due == []
+
+    # But after the backoff window elapses, it becomes due again
+    due_later = get_due_threads(conn, due_at + timedelta(minutes=11))
+    assert len(due_later) == 1
+
+
+def test_mark_needs_review_flag_clears_when_ticketed(tmp_path):
+    conn = make_conn(tmp_path)
+    now = datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc)
+    upsert_message(conn, "g1", "s1", "Juan", Message("m1", "Hola", None, now.isoformat()), now, inactivity_minutes=10)
+
+    mark_needs_review(conn, "g1", "s1", now, inactivity_minutes=10)
+    row = conn.execute("SELECT needs_review FROM threads WHERE group_id = ? AND sender_id = ?", ("g1", "s1")).fetchone()
+    assert row[0] == 1
+
+    mark_ticketed(conn, "g1", "s1")
+    row = conn.execute("SELECT needs_review FROM threads WHERE group_id = ? AND sender_id = ?", ("g1", "s1")).fetchone()
+    assert row[0] == 0
+
+
+def test_mark_needs_review_flag_clears_when_deadline_reset(tmp_path):
+    conn = make_conn(tmp_path)
+    now = datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc)
+    upsert_message(conn, "g1", "s1", "Juan", Message("m1", "Hola", None, now.isoformat()), now, inactivity_minutes=10)
+
+    mark_needs_review(conn, "g1", "s1", now, inactivity_minutes=10)
+    row = conn.execute("SELECT needs_review FROM threads WHERE group_id = ? AND sender_id = ?", ("g1", "s1")).fetchone()
+    assert row[0] == 1
+
+    reset_deadline(conn, "g1", "s1", now, inactivity_minutes=10)
+    row = conn.execute("SELECT needs_review FROM threads WHERE group_id = ? AND sender_id = ?", ("g1", "s1")).fetchone()
+    assert row[0] == 0
+
+
+def test_get_stale_threads_returns_threads_past_max_lifetime(tmp_path):
+    conn = make_conn(tmp_path)
+    now = datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc)
+    old_start = now - timedelta(minutes=300)
+    upsert_message(conn, "g1", "s1", "Juan", Message("m1", "Hola", None, old_start.isoformat()), old_start, inactivity_minutes=10)
+    # a fresh thread that should NOT be stale
+    upsert_message(conn, "g1", "s2", "Maria", Message("m2", "Hola", None, now.isoformat()), now, inactivity_minutes=10)
+
+    stale = get_stale_threads(conn, now, max_lifetime_minutes=240)
+
+    assert [t.sender_id for t in stale] == ["s1"]
+
+
+def test_get_stale_threads_excludes_already_ticketed(tmp_path):
+    conn = make_conn(tmp_path)
+    now = datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc)
+    old_start = now - timedelta(minutes=300)
+    upsert_message(conn, "g1", "s1", "Juan", Message("m1", "Hola", None, old_start.isoformat()), old_start, inactivity_minutes=10)
+    mark_ticketed(conn, "g1", "s1")
+
+    stale = get_stale_threads(conn, now, max_lifetime_minutes=240)
+
+    assert stale == []
+
+
+def test_archive_thread_marks_ticketed_without_writing_ticket(tmp_path):
+    conn = make_conn(tmp_path)
+    now = datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc)
+    upsert_message(conn, "g1", "s1", "Juan", Message("m1", "Hola", None, now.isoformat()), now, inactivity_minutes=10)
+
+    archive_thread(conn, "g1", "s1")
+
+    row = conn.execute("SELECT ticketed FROM threads WHERE group_id = ? AND sender_id = ?", ("g1", "s1")).fetchone()
+    assert row[0] == 1
     due = get_due_threads(conn, now + timedelta(minutes=11))
-    assert len(due) == 1
+    assert due == []

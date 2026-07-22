@@ -88,16 +88,17 @@ def get_due_threads(conn, now: datetime) -> list[ThreadRecord]:
 
 def mark_ticketed(conn, group_id: str, sender_id: str) -> None:
     conn.execute(
-        "UPDATE threads SET ticketed = 1 WHERE group_id = ? AND sender_id = ?",
+        "UPDATE threads SET ticketed = 1, needs_review = 0 WHERE group_id = ? AND sender_id = ?",
         (group_id, sender_id),
     )
     conn.commit()
 
 
-def mark_needs_review(conn, group_id: str, sender_id: str) -> None:
+def mark_needs_review(conn, group_id: str, sender_id: str, now: datetime, inactivity_minutes: int) -> None:
+    deadline_at = (now + timedelta(minutes=inactivity_minutes)).isoformat()
     conn.execute(
-        "UPDATE threads SET needs_review = 1 WHERE group_id = ? AND sender_id = ?",
-        (group_id, sender_id),
+        "UPDATE threads SET needs_review = 1, deadline_at = ? WHERE group_id = ? AND sender_id = ?",
+        (deadline_at, group_id, sender_id),
     )
     conn.commit()
 
@@ -105,7 +106,29 @@ def mark_needs_review(conn, group_id: str, sender_id: str) -> None:
 def reset_deadline(conn, group_id: str, sender_id: str, now: datetime, inactivity_minutes: int) -> None:
     deadline_at = (now + timedelta(minutes=inactivity_minutes)).isoformat()
     conn.execute(
-        "UPDATE threads SET deadline_at = ? WHERE group_id = ? AND sender_id = ?",
+        "UPDATE threads SET deadline_at = ?, needs_review = 0 WHERE group_id = ? AND sender_id = ?",
         (deadline_at, group_id, sender_id),
     )
     conn.commit()
+
+
+def get_stale_threads(conn, now: datetime, max_lifetime_minutes: int) -> list[ThreadRecord]:
+    rows = conn.execute(
+        """
+        SELECT group_id, sender_id, sender_name, messages_json, last_activity_at, deadline_at
+        FROM threads
+        WHERE ticketed = 0
+        """
+    ).fetchall()
+    threads = [_row_to_thread(row) for row in rows]
+    stale = []
+    for thread in threads:
+        first_timestamp = datetime.fromisoformat(thread.messages[0].timestamp)
+        age_minutes = (now - first_timestamp).total_seconds() / 60
+        if age_minutes >= max_lifetime_minutes:
+            stale.append(thread)
+    return stale
+
+
+def archive_thread(conn, group_id: str, sender_id: str) -> None:
+    mark_ticketed(conn, group_id, sender_id)

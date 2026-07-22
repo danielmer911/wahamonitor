@@ -1,8 +1,8 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from monitor.db import get_connection, init_db
 from monitor.evaluator import TicketDecision
-from monitor.scheduler import process_due_threads
+from monitor.scheduler import archive_stale_threads, process_due_threads
 from monitor.threads import Message, upsert_message
 
 
@@ -220,3 +220,35 @@ def test_process_due_threads_batch_isolation_write_ticket_failure(tmp_path, monk
         "SELECT needs_review FROM threads WHERE group_id = ? AND sender_id = ?", ("g1", "s2")
     ).fetchone()
     assert row_s2[0] == 0
+
+
+def test_archive_stale_threads_archives_threads_past_max_lifetime(tmp_path):
+    conn = make_conn(tmp_path)
+    now = datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc)
+    old_start = now - timedelta(minutes=300)
+    upsert_message(
+        conn, "g1", "s1", "Juan", Message("m1", "Viejo", None, old_start.isoformat()), old_start, inactivity_minutes=10
+    )
+    upsert_message(
+        conn, "g1", "s2", "Maria", Message("m2", "Nuevo", None, now.isoformat()), now, inactivity_minutes=10
+    )
+
+    class Config:
+        max_thread_lifetime_minutes = 240
+
+    archived_count = archive_stale_threads(conn, Config(), now)
+
+    assert archived_count == 1
+
+    row_s1 = conn.execute(
+        "SELECT ticketed FROM threads WHERE group_id = ? AND sender_id = ?", ("g1", "s1")
+    ).fetchone()
+    assert row_s1[0] == 1
+
+    row_s2 = conn.execute(
+        "SELECT ticketed FROM threads WHERE group_id = ? AND sender_id = ?", ("g1", "s2")
+    ).fetchone()
+    assert row_s2[0] == 0
+
+    tickets_dir = tmp_path / "tickets"
+    assert not tickets_dir.exists() or list(tickets_dir.iterdir()) == []
