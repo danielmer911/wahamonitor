@@ -9,8 +9,9 @@ visual identity (mustard/ochre palette, Bebas Neue wordmark). Ships as a
 single Docker image: the existing FastAPI backend serves both the JSON
 API and the built frontend's static files, so there is one deploy, not
 two. Users log in with email/password; an admin role can create new
-accounts. Ticket status/handling state is out of scope here — it will be
-sourced from elsewhere later.
+accounts. Each ticket also carries a status (Pendiente / En progreso /
+Resuelto) with a causa raíz + solución that the support team fills in,
+plus a minimalist timeline of status changes.
 
 ## Goals
 
@@ -20,6 +21,10 @@ sourced from elsewhere later.
   media previews (images, audio, documents).
 - Full user accounts (email + password), with an admin role that can
   create new accounts for teammates. No public signup.
+- Let the support team mark each ticket's status (Pendiente / En
+  progreso / Resuelto), record a causa raíz and solución (required to
+  move to Resuelto), and see a minimalist history of that ticket's
+  status changes.
 - Single Docker deployment: one image, one container, serving both the
   API and the frontend.
 - Match the established visual identity: Diner Americana palette
@@ -29,9 +34,6 @@ sourced from elsewhere later.
 
 ## Non-goals (this stage)
 
-- No ticket status/handled tracking in this frontend — that will come
-  from a different source later; this dashboard does not add a status
-  field or write-back action for tickets.
 - No group-management UI (monitoring opt-out/include) — stays on the
   backend's existing CLI.
 - No SSO/OAuth — email + password only.
@@ -46,6 +48,16 @@ New tables in the existing `monitor.db` SQLite database:
   `"admin"` or `"user"`. No separate sessions table; auth uses a signed
   JWT in an httpOnly cookie (24h expiry) rather than server-side session
   storage.
+- `ticket_status(ticket_id PRIMARY KEY, status, causa_raiz, solucion,
+  updated_at)` — the current state of one ticket. `status` is one of
+  `"pendiente"`, `"en_progreso"`, `"resuelto"`. A ticket with no row here
+  is implicitly `"pendiente"` with empty `causa_raiz`/`solucion` — rows
+  are only created the first time someone changes a ticket's status, so
+  existing ticket files on disk don't need a backfill migration.
+- `ticket_status_history(id, ticket_id, status, changed_by, changed_at)`
+  — an append-only log; one row is inserted every time a ticket's status
+  changes (not on every causa_raiz/solución edit), recording who made the
+  change and when. This is what powers the status timeline.
 
 New API endpoints on the existing FastAPI service:
 
@@ -65,10 +77,24 @@ New API endpoints on the existing FastAPI service:
   (missing/corrupt `ticket.md`) is skipped and logged server-side rather
   than failing the whole listing.
 - `GET /api/tickets/{ticket_id}` — full detail for one ticket: parsed
-  markdown fields (summary, problem description, original messages) plus
-  the list of its media filenames.
+  markdown fields (summary, problem description, original messages), the
+  list of its media filenames, its current status/causa_raiz/solución
+  (defaulting to `"pendiente"` + empty fields if no `ticket_status` row
+  exists yet), and its full status-change history (from
+  `ticket_status_history`) for the timeline. Returning the full history
+  alongside the ticket avoids a separate history endpoint — the
+  frontend's compact dot view just shows the last couple of entries and
+  the modal shows all of them.
 - `GET /api/tickets/{ticket_id}/media/{filename}` — serves one media
   file from that ticket's folder, for inline preview or download.
+- `PUT /api/tickets/{ticket_id}/status` — body: `{status, causa_raiz?,
+  solucion?}`. Upserts the `ticket_status` row and, if `status` differs
+  from the ticket's current status, appends a `ticket_status_history`
+  row (`changed_by` = the authenticated user). Returns 400 if `status`
+  is `"resuelto"` and either `causa_raiz` or `solucion` is empty —
+  moving to Resuelto requires both fields filled in as part of the same
+  submit. Moving between Pendiente and En progreso has no such
+  requirement.
 
 All ticket endpoints require any authenticated user (role doesn't
 matter); only `/api/admin/users` checks for `role == "admin"`.
@@ -82,9 +108,17 @@ matter); only `/api/admin/users` checks for `role == "admin"`.
   navigates to that ticket's detail page.
 - **Ticket detail page** — single column, top to bottom: ticket metadata
   header (group, sender, date), Spanish "Resumen", "Descripcion del
-  problema", "Mensajes originales" (chronological), then "Adjuntos" with
-  inline previews — images render directly, audio gets a player, other
-  documents show a download link with a file-type icon.
+  problema", "Mensajes originales" (chronological), "Adjuntos" with
+  inline previews (images render directly, audio gets a player, other
+  documents show a download link with a file-type icon), and finally
+  the **resolution panel**: a three-way segmented control for status
+  (Pendiente / En progreso / Resuelto), "Causa raíz" and "Solución" text
+  fields, a "Guardar" submit button, and a compact dot timeline
+  underneath summarizing the last couple of status transitions.
+  Submitting with status "Resuelto" and either field empty shows a
+  validation error instead of calling the API. Clicking the compact
+  dot timeline opens a modal with the full vertical status-change
+  history (status + timestamp for every transition).
 - **Admin: user management page** — list of existing users plus a
   create-user form (email, password, role). Only visible/reachable for
   admin-role accounts; the nav item is hidden for regular users, and the
@@ -106,10 +140,15 @@ authenticated.
   content (readability at small sizes takes priority there).
 - **Layout:** icon sidebar + dense table for the ticket list; strict
   single-column top-to-bottom flow for ticket detail (header → resumen →
-  mensajes originales → adjuntos).
+  mensajes originales → adjuntos → resolution panel).
+- **Resolution panel:** segmented control for status, fields, "Guardar"
+  button, and a compact dot-and-line timeline below it; clicking the
+  compact timeline opens a modal/slide-over with the full vertical
+  history (status + timestamp per entry).
 - Mockups for all of the above were validated interactively during
   brainstorming (palette/font direction, font comparison, list layout,
-  detail layout) before being written into this spec.
+  detail layout, resolution panel + timeline) before being written into
+  this spec.
 
 ## Error Handling & Edge Cases
 
@@ -121,19 +160,27 @@ authenticated.
   message rather than an empty/broken table.
 - Non-admin calling `/api/admin/users` → 403; frontend also hides that
   UI for non-admins as a first line of defense.
+- Submitting status `"resuelto"` with an empty `causa_raiz` or
+  `solucion` → 400 from the backend; the frontend also validates this
+  client-side before submitting, so the common case never round-trips.
 
 ## Testing
 
 - **Backend:** pytest tests for the new endpoints (login/logout/me,
-  admin user creation and its 403 case, ticket list/detail/media),
+  admin user creation and its 403 case, ticket list/detail/media, and
+  the status endpoint's transitions including the resuelto-requires-
+  both-fields 400 case and the history-row-per-status-change behavior),
   following the existing project's TDD + mocked-external-services
   pattern. Tests use a temporary `tickets/` folder with fixture ticket
   files; no real WAHA/LLM/MCP calls, consistent with the rest of the
   suite.
 - **Frontend:** Vitest + React Testing Library for the key flows: login,
   ticket list rendering + filtering, ticket detail rendering with media
-  previews, and admin-only visibility of the user-management page. The
-  API client is mocked in these tests.
+  previews, admin-only visibility of the user-management page, the
+  resolution panel's status/field submission (including the client-side
+  validation block on Resuelto with empty fields), and the compact
+  timeline opening the full-history modal. The API client is mocked in
+  these tests.
 
 ## Deployment
 
