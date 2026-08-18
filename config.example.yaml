@@ -1,6 +1,7 @@
 waha:
   base_url: "https://waha.example.com"
   api_key: "REPLACE_ME"
+  session: "default"
 
 mcp:
   url: "https://waha.example.com/mcp"

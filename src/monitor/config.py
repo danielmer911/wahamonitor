@@ -8,6 +8,7 @@ import yaml
 class Config:
     waha_base_url: str
     waha_api_key: str
+    waha_session: str
     mcp_url: str
     mcp_api_key: str | None
     llm_provider: str
@@ -29,6 +30,7 @@ def load_config(path: str) -> Config:
     return Config(
         waha_base_url=raw["waha"]["base_url"],
         waha_api_key=raw["waha"]["api_key"],
+        waha_session=raw["waha"].get("session", "default"),
         mcp_url=raw["mcp"]["url"],
         mcp_api_key=raw["mcp"].get("api_key"),
         llm_provider=raw["llm"]["provider"],

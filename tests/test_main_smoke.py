@@ -11,7 +11,7 @@ class FakeLLM:
 
 
 class FakeWahaClient:
-    def __init__(self, base_url=None, api_key=None):
+    def __init__(self, base_url=None, api_key=None, session=None):
         pass
 
     def list_groups(self):

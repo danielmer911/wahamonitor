@@ -33,7 +33,7 @@ def create_full_app(config_path: str, start_background_scheduler: bool = True):
     conn = get_connection(config.db_path, check_same_thread=False)
     init_db(conn)
 
-    waha_client = WahaClient(config.waha_base_url, config.waha_api_key)
+    waha_client = WahaClient(config.waha_base_url, config.waha_api_key, config.waha_session)
     llm = get_provider(config)
 
     sync_groups(conn, waha_client)

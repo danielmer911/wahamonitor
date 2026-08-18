@@ -12,6 +12,7 @@ def make_config(provider: str) -> Config:
     return Config(
         waha_base_url="https://waha.example.com",
         waha_api_key="k",
+        waha_session="default",
         mcp_url="https://waha.example.com/mcp",
         mcp_api_key=None,
         llm_provider=provider,
