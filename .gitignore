@@ -6,3 +6,6 @@ data/
 tickets/
 *.egg-info/
 .superpowers/
+config.yaml
+.env
+.DS_Store
