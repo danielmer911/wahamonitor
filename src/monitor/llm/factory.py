@@ -1,8 +1,9 @@
 from monitor.config import Config
 from monitor.llm.anthropic_provider import AnthropicProvider
 from monitor.llm.base import LLMProvider
+from monitor.llm.openai_provider import OpenAIProvider
 
-_PROVIDERS = {"anthropic": AnthropicProvider}
+_PROVIDERS = {"anthropic": AnthropicProvider, "openai": OpenAIProvider}
 
 
 def get_provider(config: Config) -> LLMProvider:
