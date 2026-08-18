@@ -162,11 +162,25 @@ try/except:
   in the same scheduler tick).
 - A `needs_review` thread from a Kappa failure still has a local file, so
   nothing is silently lost even though Kappa itself doesn't have it yet.
-- The `kappa_tickets` UNIQUE constraint is the actual duplicate-prevention
-  mechanism (not just application logic), so even a crash between a
-  successful Kappa call and the local bookkeeping can't produce two
-  Kappa tickets for the same conversation snapshot — retrying the whole
-  flow just gets caught by the constraint the next time.
+- The `kappa_tickets` UNIQUE constraint is the duplicate-prevention
+  mechanism for retries *after* a row has been committed — once
+  `record_kappa_ticket` commits, `has_existing_kappa_ticket` will find it
+  and any re-evaluation of that thread is skipped rather than calling
+  Kappa again.
+- **Residual risk (accepted, not solved):** the constraint only protects
+  the window *after* the local row commits. A process crash (OS kill,
+  deploy, host restart) in the narrow window between `create_ticket`
+  returning success and `record_kappa_ticket`'s `conn.commit()`
+  completing leaves nothing recorded locally. On restart, the thread is
+  still "due," gets re-evaluated, `has_existing_kappa_ticket` returns
+  `False`, and `create_ticket` is called again — creating a real
+  duplicate ticket in Kappa. This plan's non-goals explicitly exclude
+  automated retry/reliability engineering for the Kappa call, so this
+  window is an accepted operational risk rather than something this
+  system guarantees against. Closing it (e.g. an idempotency key on the
+  Kappa side, or an outbox-style two-phase commit) would be a materially
+  larger feature and is left as a decision for later if it becomes a
+  real operational problem.
 
 ## Testing
 

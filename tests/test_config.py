@@ -116,3 +116,40 @@ def test_load_config_reads_kappa_section_when_present(tmp_path):
 
     assert config.kappa_base_url == "https://kappa.example.com"
     assert config.kappa_api_key == "kappa-key"
+
+
+def test_load_config_handles_bare_kappa_section(tmp_path):
+    """A bare `kappa:` key with no sub-keys parses as {"kappa": None} in PyYAML.
+
+    load_config must normalize that None to {} instead of crashing with
+    AttributeError when a rollback temporarily comments out base_url/api_key.
+    """
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        textwrap.dedent(
+            """
+            waha:
+              base_url: "https://waha.example.com"
+              api_key: "waha-key"
+            mcp:
+              url: "https://waha.example.com/mcp"
+              api_key: "mcp-key"
+            llm:
+              provider: "anthropic"
+              model: "claude-sonnet-5"
+              api_key: "llm-key"
+            behavior:
+              default_inactivity_minutes: 10
+              max_thread_lifetime_minutes: 240
+            storage:
+              db_path: "data/monitor.db"
+              tickets_dir: "tickets"
+            kappa:
+            """
+        )
+    )
+
+    config = load_config(str(config_path))
+
+    assert config.kappa_base_url is None
+    assert config.kappa_api_key is None

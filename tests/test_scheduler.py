@@ -404,3 +404,56 @@ def test_process_due_threads_falls_back_to_local_on_kappa_failure(tmp_path, monk
         "SELECT ticketed, needs_review FROM threads WHERE group_id = ? AND sender_id = ?", ("g1", "s1")
     ).fetchone()
     assert row == (1, 1)  # ticketed via fallback, but flagged for human review
+
+
+def test_process_due_threads_flags_review_when_bookkeeping_fails_after_kappa_success(tmp_path, monkeypatch):
+    """create_ticket succeeds (a real Kappa ticket now exists) but the local
+    record_kappa_ticket bookkeeping raises. This must NOT be treated like a
+    full Kappa failure: no redundant local fallback file (Kappa already has
+    the conversation), but the thread should still be marked ticketed (the
+    handoff genuinely succeeded) AND needs_review (so a human notices the
+    bookkeeping gap and can reconcile using the Kappa ticket id/token that
+    was logged)."""
+    conn = make_conn(tmp_path)
+    now = datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc)
+    upsert_message(conn, "g1", "s1", "Juan", Message("m1", "Problema", None, now.isoformat()), now, inactivity_minutes=10)
+    _insert_group(conn, "g1", "Soporte Acme", now)
+    set_group_mapping(conn, "g1", kappa_client_id=60, kappa_project_id=None)
+
+    monkeypatch.setattr("monitor.scheduler.fetch_context", lambda *a, **k: "contexto")
+    monkeypatch.setattr(
+        "monitor.scheduler.deep_evaluate",
+        lambda llm, mcp_context, thread: TicketDecision(True, "resumen", "problema detallado"),
+    )
+    written_folders = []
+    monkeypatch.setattr(
+        "monitor.scheduler.write_ticket",
+        lambda tickets_dir, group_name, thread, decision, waha_client, now: written_folders.append(group_name) or "folder",
+    )
+
+    def boom_record_kappa_ticket(*args, **kwargs):
+        raise RuntimeError("disk full / db locked")
+
+    monkeypatch.setattr("monitor.scheduler.record_kappa_ticket", boom_record_kappa_ticket)
+
+    class Config:
+        tickets_dir = str(tmp_path / "tickets")
+        mcp_url = "https://waha.example.com/mcp"
+        mcp_api_key = None
+        default_inactivity_minutes = 10
+
+    fake_kappa = FakeKappaClient()
+    later = now + timedelta(minutes=11)
+    processed = process_due_threads(
+        conn, Config(), FakeWahaClient(), FakeLLM(), group_name_lookup={"g1": "Soporte Acme"}, now=later,
+        kappa_client=fake_kappa,
+    )
+
+    assert processed == 1
+    assert len(fake_kappa.calls) == 1  # create_ticket really was called and succeeded
+    assert written_folders == []  # local fallback NOT used — Kappa already has the real ticket
+
+    row = conn.execute(
+        "SELECT ticketed, needs_review FROM threads WHERE group_id = ? AND sender_id = ?", ("g1", "s1")
+    ).fetchone()
+    assert row == (1, 1)  # handoff succeeded (ticketed) but flagged for human reconciliation

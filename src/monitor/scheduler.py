@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 
 from monitor.evaluator import deep_evaluate
@@ -14,6 +15,8 @@ from monitor.threads import (
     reset_deadline,
 )
 from monitor.tickets import write_ticket
+
+logger = logging.getLogger(__name__)
 
 
 def _write_local_fallback(conn, config, waha_client, group_name_lookup, thread, decision, now):
@@ -38,14 +41,40 @@ def _handle_ticket_worthy_thread(conn, config, waha_client, kappa_client, group_
     try:
         fields = build_kappa_payload(thread, decision, client_id, mapping["kappa_project_id"])
         files = collect_media_files(thread, waha_client)
+        # Accepted residual risk (see design spec's Error Handling section): if the
+        # process crashes between create_ticket succeeding and record_kappa_ticket's
+        # commit below, nothing is recorded locally. On restart this thread looks
+        # never-ticketed and create_ticket would be called again, creating a real
+        # duplicate ticket in Kappa. No automated retry/idempotency mechanism is in
+        # scope for this handoff-only integration — this is a known tradeoff, not a
+        # guarantee that duplicates can't happen.
         result = kappa_client.create_ticket(fields, files)
-        record_kappa_ticket(
-            conn, thread.group_id, thread.sender_id, last_message_id, result["id"], result.get("token"), now
-        )
-        mark_ticketed(conn, thread.group_id, thread.sender_id)
     except Exception:
         _write_local_fallback(conn, config, waha_client, group_name_lookup, thread, decision, now)
         mark_needs_review(conn, thread.group_id, thread.sender_id, now, config.default_inactivity_minutes)
+        return
+
+    try:
+        record_kappa_ticket(
+            conn, thread.group_id, thread.sender_id, last_message_id, result["id"], result.get("token"), now
+        )
+    except Exception:
+        # The Kappa ticket genuinely exists now (create_ticket already succeeded) —
+        # writing a local fallback file here would duplicate/confuse, not help.
+        # Mark the thread ticketed (the handoff did succeed) but also flag it for
+        # human review, and log the orphaned Kappa ticket's id/token so it can be
+        # reconciled manually instead of silently losing track of it.
+        logger.error(
+            "Kappa ticket id=%s token=%s was created for group_id=%s sender_id=%s but "
+            "local bookkeeping (record_kappa_ticket) failed; this ticket is orphaned "
+            "from local tracking and needs manual reconciliation.",
+            result.get("id"), result.get("token"), thread.group_id, thread.sender_id,
+        )
+        mark_ticketed(conn, thread.group_id, thread.sender_id)
+        mark_needs_review(conn, thread.group_id, thread.sender_id, now, config.default_inactivity_minutes)
+        return
+
+    mark_ticketed(conn, thread.group_id, thread.sender_id)
 
 
 def process_due_threads(
