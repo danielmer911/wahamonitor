@@ -18,6 +18,8 @@ class Config:
     max_thread_lifetime_minutes: int
     db_path: str
     tickets_dir: str
+    kappa_base_url: str | None
+    kappa_api_key: str | None
 
 
 def load_config(path: str) -> Config:
@@ -40,4 +42,6 @@ def load_config(path: str) -> Config:
         max_thread_lifetime_minutes=raw["behavior"]["max_thread_lifetime_minutes"],
         db_path=raw["storage"]["db_path"],
         tickets_dir=raw["storage"]["tickets_dir"],
+        kappa_base_url=raw.get("kappa", {}).get("base_url"),
+        kappa_api_key=raw.get("kappa", {}).get("api_key"),
     )

@@ -22,6 +22,8 @@ def make_config(provider: str) -> Config:
         max_thread_lifetime_minutes=240,
         db_path="data/monitor.db",
         tickets_dir="tickets",
+        kappa_base_url=None,
+        kappa_api_key=None,
     )
 
 

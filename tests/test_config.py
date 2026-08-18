@@ -44,6 +44,8 @@ def test_load_config_reads_all_fields(tmp_path):
     assert config.db_path == "data/monitor.db"
     assert config.tickets_dir == "tickets"
     assert config.waha_session == "default"
+    assert config.kappa_base_url is None
+    assert config.kappa_api_key is None
 
 
 def test_load_config_reads_explicit_waha_session(tmp_path):
@@ -80,3 +82,37 @@ def test_load_config_reads_explicit_waha_session(tmp_path):
 def test_load_config_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_config(str(tmp_path / "missing.yaml"))
+
+
+def test_load_config_reads_kappa_section_when_present(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        textwrap.dedent(
+            """
+            waha:
+              base_url: "https://waha.example.com"
+              api_key: "waha-key"
+            mcp:
+              url: "https://waha.example.com/mcp"
+              api_key: "mcp-key"
+            llm:
+              provider: "anthropic"
+              model: "claude-sonnet-5"
+              api_key: "llm-key"
+            behavior:
+              default_inactivity_minutes: 10
+              max_thread_lifetime_minutes: 240
+            storage:
+              db_path: "data/monitor.db"
+              tickets_dir: "tickets"
+            kappa:
+              base_url: "https://kappa.example.com"
+              api_key: "kappa-key"
+            """
+        )
+    )
+
+    config = load_config(str(config_path))
+
+    assert config.kappa_base_url == "https://kappa.example.com"
+    assert config.kappa_api_key == "kappa-key"

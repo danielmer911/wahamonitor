@@ -19,3 +19,7 @@ behavior:
 storage:
   db_path: "data/monitor.db"
   tickets_dir: "tickets"
+
+kappa:
+  base_url: "https://kappa.example.com"
+  api_key: "REPLACE_ME"

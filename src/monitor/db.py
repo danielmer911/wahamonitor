@@ -6,7 +6,9 @@ CREATE TABLE IF NOT EXISTS groups (
     group_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     excluded INTEGER NOT NULL DEFAULT 0,
-    last_synced_at TEXT NOT NULL
+    last_synced_at TEXT NOT NULL,
+    kappa_client_id INTEGER,
+    kappa_project_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS threads (
@@ -23,6 +25,17 @@ CREATE TABLE IF NOT EXISTS threads (
 
 CREATE TABLE IF NOT EXISTS seen_messages (
     message_id TEXT PRIMARY KEY
+);
+
+CREATE TABLE IF NOT EXISTS kappa_tickets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    last_message_id TEXT NOT NULL,
+    kappa_ticket_id INTEGER NOT NULL,
+    kappa_token TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(group_id, sender_id, last_message_id)
 );
 """
 
