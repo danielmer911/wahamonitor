@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from monitor.config import load_config
 from monitor.db import get_connection, init_db
 from monitor.groups import list_groups, sync_groups
+from monitor.kappa_client import KappaClient
+from monitor.kappa_routes import create_kappa_router
 from monitor.llm.factory import get_provider
 from monitor.scheduler import archive_stale_threads, process_due_threads
 from monitor.waha_client import WahaClient
@@ -13,11 +15,11 @@ from monitor.webhook import create_app
 SCHEDULER_INTERVAL_SECONDS = 30
 
 
-def _run_scheduler_loop(conn, config, waha_client, llm, stop_event: threading.Event):
+def _run_scheduler_loop(conn, config, waha_client, llm, kappa_client, stop_event: threading.Event):
     while not stop_event.is_set():
         group_name_lookup = {g["group_id"]: g["name"] for g in list_groups(conn)}
         now = datetime.now(timezone.utc)
-        process_due_threads(conn, config, waha_client, llm, group_name_lookup, now)
+        process_due_threads(conn, config, waha_client, llm, group_name_lookup, now, kappa_client=kappa_client)
         archive_stale_threads(conn, config, now)
         sync_groups(conn, waha_client)
         stop_event.wait(SCHEDULER_INTERVAL_SECONDS)
@@ -36,15 +38,20 @@ def create_full_app(config_path: str, start_background_scheduler: bool = True):
     waha_client = WahaClient(config.waha_base_url, config.waha_api_key, config.waha_session)
     llm = get_provider(config)
 
+    kappa_client = None
+    if config.kappa_base_url and config.kappa_api_key:
+        kappa_client = KappaClient(config.kappa_base_url, config.kappa_api_key)
+
     sync_groups(conn, waha_client)
 
     app = create_app(conn, config, llm)
+    app.include_router(create_kappa_router(conn, kappa_client))
 
     if start_background_scheduler:
         stop_event = threading.Event()
         thread = threading.Thread(
             target=_run_scheduler_loop,
-            args=(conn, config, waha_client, llm, stop_event),
+            args=(conn, config, waha_client, llm, kappa_client, stop_event),
             daemon=True,
         )
         thread.start()

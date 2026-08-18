@@ -96,3 +96,78 @@ def test_create_full_app_honors_monitor_db_path_env_override(tmp_path, monkeypat
     assert response.status_code == 200
     assert override_db_path.exists()
     assert not configured_db_path.exists()
+
+
+def test_create_full_app_wires_kappa_routes_when_configured(tmp_path, monkeypatch):
+    import textwrap
+
+    monkeypatch.setattr("monitor.main.WahaClient", FakeWahaClient)
+    monkeypatch.setattr("monitor.main.get_provider", lambda config: FakeLLM())
+    monkeypatch.delenv("MONITOR_DB_PATH", raising=False)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        textwrap.dedent(
+            f"""
+            waha:
+              base_url: "https://waha.example.com"
+              api_key: "waha-key"
+            mcp:
+              url: "https://waha.example.com/mcp"
+              api_key: "mcp-key"
+            llm:
+              provider: "anthropic"
+              model: "claude-sonnet-5"
+              api_key: "llm-key"
+            behavior:
+              default_inactivity_minutes: 10
+              max_thread_lifetime_minutes: 240
+            storage:
+              db_path: "{tmp_path}/monitor.db"
+              tickets_dir: "{tmp_path}/tickets"
+            kappa:
+              base_url: "https://kappa.example.com"
+              api_key: "kappa-key"
+            """
+        )
+    )
+
+    from monitor.main import create_full_app
+    app = create_full_app(str(config_path), start_background_scheduler=False)
+    client = TestClient(app)
+
+    response = client.get("/api/groups")
+    assert response.status_code == 200
+
+
+def test_create_full_app_kappa_routes_503_when_not_configured(tmp_path, monkeypatch):
+    monkeypatch.setattr("monitor.main.WahaClient", FakeWahaClient)
+    monkeypatch.setattr("monitor.main.get_provider", lambda config: FakeLLM())
+    monkeypatch.delenv("MONITOR_DB_PATH", raising=False)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+waha:
+  base_url: "https://waha.example.com"
+  api_key: "waha-key"
+mcp:
+  url: "https://waha.example.com/mcp"
+  api_key: "mcp-key"
+llm:
+  provider: "anthropic"
+  model: "claude-sonnet-5"
+  api_key: "llm-key"
+behavior:
+  default_inactivity_minutes: 10
+  max_thread_lifetime_minutes: 240
+storage:
+  db_path: "{tmp_path}/monitor.db"
+  tickets_dir: "{tmp_path}/tickets"
+"""
+    )
+
+    from monitor.main import create_full_app
+    app = create_full_app(str(config_path), start_background_scheduler=False)
+    client = TestClient(app)
+
+    response = client.get("/api/kappa/clients")
+    assert response.status_code == 503
