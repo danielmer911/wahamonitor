@@ -704,7 +704,50 @@ git commit -m "feat: add Kappa API client (create ticket, list clients/projects)
 
 - [ ] **Step 1: Extract `guess_media_extension` in `tickets.py` (refactor, no behavior change)**
 
-Read the current `write_ticket` implementation in `src/monitor/tickets.py` first — it has an inline block computing a media file's extension from `mimetype`, falling back to the URL's extension, falling back to `.bin`. Extract that block into a standalone function, and call it from `write_ticket` instead:
+The current `write_ticket` in `src/monitor/tickets.py` ends with this exact block (the media-writing loop):
+
+```python
+    for index, message in enumerate(media_messages, start=1):
+        media_url = message.media["url"]
+        data = waha_client.download_media(media_url)
+
+        # Prefer extension from mimetype if available
+        mimetype = message.media.get("mimetype")
+        extension = None
+        if mimetype:
+            extension = mimetypes.guess_extension(mimetype)
+
+        # Fall back to extension from URL if mimetype didn't work
+        if not extension:
+            extension = os.path.splitext(media_url)[1]
+
+        # Final fallback to .bin
+        if not extension:
+            extension = ".bin"
+
+        media_filename = f"adjunto_{index}{extension}"
+        with open(os.path.join(folder_path, media_filename), "wb") as f:
+            f.write(data)
+
+    return folder_path
+```
+
+Replace that entire block with:
+
+```python
+    for index, message in enumerate(media_messages, start=1):
+        media_url = message.media["url"]
+        data = waha_client.download_media(media_url)
+        extension = guess_media_extension(message.media, media_url)
+
+        media_filename = f"adjunto_{index}{extension}"
+        with open(os.path.join(folder_path, media_filename), "wb") as f:
+            f.write(data)
+
+    return folder_path
+```
+
+And add this new top-level function to the same file (`src/monitor/tickets.py`), above `write_ticket`:
 
 ```python
 def guess_media_extension(media: dict, media_url: str) -> str:
@@ -722,11 +765,7 @@ def guess_media_extension(media: dict, media_url: str) -> str:
     return extension
 ```
 
-In `write_ticket`, replace the inline extension-computing lines with:
-
-```python
-        extension = guess_media_extension(message.media, media_url)
-```
+This is a pure refactor: the loop's behavior is identical, just with the extension-guessing logic pulled into a reusable function (`mimetypes` and `os` are already imported at the top of `tickets.py` — no new imports needed).
 
 - [ ] **Step 2: Run the existing ticket tests to confirm the refactor didn't change behavior**
 
