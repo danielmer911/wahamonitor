@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from monitor.db import get_connection, init_db
 from monitor.evaluator import TicketDecision
+from monitor.groups import set_group_mapping
 from monitor.scheduler import archive_stale_threads, process_due_threads
 from monitor.threads import Message, upsert_message
 
@@ -16,10 +17,33 @@ class FakeWahaClient:
         return b"data"
 
 
+class FakeKappaClient:
+    def __init__(self, response=None, error=None):
+        self.response = response or {"id": 900, "token": "tok-900"}
+        self.error = error
+        self.calls = []
+
+    def create_ticket(self, fields, files):
+        self.calls.append((fields, files))
+        if self.error:
+            raise self.error
+        return self.response
+
+
 def make_conn(tmp_path):
     conn = get_connection(str(tmp_path / "monitor.db"))
     init_db(conn)
     return conn
+
+
+def _insert_group(conn, group_id, name, now):
+    # set_group_mapping is UPDATE-only (see tests/test_groups.py), so a groups row
+    # must exist first — normally created by sync_groups() before mapping a client.
+    conn.execute(
+        "INSERT INTO groups (group_id, name, excluded, last_synced_at) VALUES (?, ?, 0, ?)",
+        (group_id, name, now.isoformat()),
+    )
+    conn.commit()
 
 
 def test_process_due_threads_writes_ticket_when_worthy(tmp_path, monkeypatch):
@@ -252,3 +276,131 @@ def test_archive_stale_threads_archives_threads_past_max_lifetime(tmp_path):
 
     tickets_dir = tmp_path / "tickets"
     assert not tickets_dir.exists() or list(tickets_dir.iterdir()) == []
+
+
+def test_process_due_threads_sends_to_kappa_when_client_mapped(tmp_path, monkeypatch):
+    conn = make_conn(tmp_path)
+    now = datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc)
+    upsert_message(conn, "g1", "s1", "Juan", Message("m1", "Problema", None, now.isoformat()), now, inactivity_minutes=10)
+    _insert_group(conn, "g1", "Soporte Acme", now)
+    set_group_mapping(conn, "g1", kappa_client_id=60, kappa_project_id=192)
+
+    monkeypatch.setattr("monitor.scheduler.fetch_context", lambda *a, **k: "contexto")
+    monkeypatch.setattr(
+        "monitor.scheduler.deep_evaluate",
+        lambda llm, mcp_context, thread: TicketDecision(True, "resumen", "problema detallado"),
+    )
+    written_folders = []
+    monkeypatch.setattr(
+        "monitor.scheduler.write_ticket",
+        lambda tickets_dir, group_name, thread, decision, waha_client, now: written_folders.append(group_name) or "folder",
+    )
+
+    class Config:
+        tickets_dir = str(tmp_path / "tickets")
+        mcp_url = "https://waha.example.com/mcp"
+        mcp_api_key = None
+        default_inactivity_minutes = 10
+
+    fake_kappa = FakeKappaClient()
+    later = now + timedelta(minutes=11)
+    processed = process_due_threads(
+        conn, Config(), FakeWahaClient(), FakeLLM(), group_name_lookup={"g1": "Soporte Acme"}, now=later,
+        kappa_client=fake_kappa,
+    )
+
+    assert processed == 1
+    assert written_folders == []  # local fallback NOT used
+    assert len(fake_kappa.calls) == 1
+    fields, files = fake_kappa.calls[0]
+    assert fields["client"] == 60
+    assert fields["project"] == 192
+
+    from monitor.kappa_tickets import has_existing_kappa_ticket
+    assert has_existing_kappa_ticket(conn, "g1", "s1", "m1") is True
+
+    row = conn.execute(
+        "SELECT ticketed, needs_review FROM threads WHERE group_id = ? AND sender_id = ?", ("g1", "s1")
+    ).fetchone()
+    assert row == (1, 0)
+
+
+def test_process_due_threads_skips_duplicate_kappa_send(tmp_path, monkeypatch):
+    conn = make_conn(tmp_path)
+    now = datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc)
+    upsert_message(conn, "g1", "s1", "Juan", Message("m1", "Problema", None, now.isoformat()), now, inactivity_minutes=10)
+    _insert_group(conn, "g1", "Soporte Acme", now)
+    set_group_mapping(conn, "g1", kappa_client_id=60, kappa_project_id=None)
+
+    from monitor.kappa_tickets import record_kappa_ticket
+    record_kappa_ticket(conn, "g1", "s1", "m1", 900, "tok-900", now)
+
+    monkeypatch.setattr("monitor.scheduler.fetch_context", lambda *a, **k: "contexto")
+    monkeypatch.setattr(
+        "monitor.scheduler.deep_evaluate",
+        lambda llm, mcp_context, thread: TicketDecision(True, "resumen", "problema detallado"),
+    )
+
+    class Config:
+        tickets_dir = str(tmp_path / "tickets")
+        mcp_url = "https://waha.example.com/mcp"
+        mcp_api_key = None
+        default_inactivity_minutes = 10
+
+    fake_kappa = FakeKappaClient()
+    later = now + timedelta(minutes=11)
+    processed = process_due_threads(
+        conn, Config(), FakeWahaClient(), FakeLLM(), group_name_lookup={"g1": "Soporte Acme"}, now=later,
+        kappa_client=fake_kappa,
+    )
+
+    assert processed == 1
+    assert fake_kappa.calls == []  # never called again for the same key
+
+    row = conn.execute(
+        "SELECT ticketed FROM threads WHERE group_id = ? AND sender_id = ?", ("g1", "s1")
+    ).fetchone()
+    assert row[0] == 1
+
+
+def test_process_due_threads_falls_back_to_local_on_kappa_failure(tmp_path, monkeypatch):
+    conn = make_conn(tmp_path)
+    now = datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc)
+    upsert_message(conn, "g1", "s1", "Juan", Message("m1", "Problema", None, now.isoformat()), now, inactivity_minutes=10)
+    _insert_group(conn, "g1", "Soporte Acme", now)
+    set_group_mapping(conn, "g1", kappa_client_id=60, kappa_project_id=None)
+
+    monkeypatch.setattr("monitor.scheduler.fetch_context", lambda *a, **k: "contexto")
+    monkeypatch.setattr(
+        "monitor.scheduler.deep_evaluate",
+        lambda llm, mcp_context, thread: TicketDecision(True, "resumen", "problema detallado"),
+    )
+    written_folders = []
+    monkeypatch.setattr(
+        "monitor.scheduler.write_ticket",
+        lambda tickets_dir, group_name, thread, decision, waha_client, now: written_folders.append(group_name) or "folder",
+    )
+
+    class Config:
+        tickets_dir = str(tmp_path / "tickets")
+        mcp_url = "https://waha.example.com/mcp"
+        mcp_api_key = None
+        default_inactivity_minutes = 10
+
+    fake_kappa = FakeKappaClient(error=RuntimeError("Kappa is down"))
+    later = now + timedelta(minutes=11)
+    processed = process_due_threads(
+        conn, Config(), FakeWahaClient(), FakeLLM(), group_name_lookup={"g1": "Soporte Acme"}, now=later,
+        kappa_client=fake_kappa,
+    )
+
+    assert processed == 1
+    assert written_folders == ["Soporte Acme"]  # local fallback WAS used
+
+    from monitor.kappa_tickets import has_existing_kappa_ticket
+    assert has_existing_kappa_ticket(conn, "g1", "s1", "m1") is False  # nothing recorded, call failed
+
+    row = conn.execute(
+        "SELECT ticketed, needs_review FROM threads WHERE group_id = ? AND sender_id = ?", ("g1", "s1")
+    ).fetchone()
+    assert row == (1, 1)  # ticketed via fallback, but flagged for human review
