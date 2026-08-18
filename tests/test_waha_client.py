@@ -6,12 +6,35 @@ from monitor.waha_client import WahaClient
 
 @respx.mock
 def test_list_groups_returns_id_and_name():
+    # Real WAHA /api/{session}/groups responses wrap each group in
+    # "groupMetadata", with a nested "id" object (whose "_serialized"
+    # field is the flat WhatsApp group id) and the display name under
+    # "subject", not "name". This fixture mirrors that real shape,
+    # confirmed against the production API.
     respx.get("https://waha.example.com/api/default/groups").mock(
         return_value=httpx.Response(
             200,
             json=[
-                {"id": "1@g.us", "name": "Soporte Acme"},
-                {"id": "2@g.us", "name": "Soporte Beta"},
+                {
+                    "groupMetadata": {
+                        "id": {
+                            "server": "g.us",
+                            "user": "1",
+                            "_serialized": "1@g.us",
+                        },
+                        "subject": "Soporte Acme",
+                    }
+                },
+                {
+                    "groupMetadata": {
+                        "id": {
+                            "server": "g.us",
+                            "user": "2",
+                            "_serialized": "2@g.us",
+                        },
+                        "subject": "Soporte Beta",
+                    }
+                },
             ],
         )
     )

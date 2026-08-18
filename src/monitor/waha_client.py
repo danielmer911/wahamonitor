@@ -17,7 +17,14 @@ class WahaClient:
             timeout=30,
         )
         response.raise_for_status()
-        return response.json()
+        raw_groups = response.json()
+        return [
+            {
+                "id": item["groupMetadata"]["id"]["_serialized"],
+                "name": item["groupMetadata"]["subject"],
+            }
+            for item in raw_groups
+        ]
 
     def download_media(self, media_url: str) -> bytes:
         response = httpx.get(media_url, headers=self._headers(), timeout=60)
