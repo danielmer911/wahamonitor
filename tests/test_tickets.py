@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from monitor.threads import Message, ThreadRecord
 from monitor.evaluator import TicketDecision
-from monitor.tickets import write_ticket
+from monitor.tickets import write_ticket, guess_media_extension
 
 
 class FakeWahaClient:
@@ -158,3 +158,15 @@ def test_write_ticket_media_extension_from_mimetype_not_url(tmp_path):
     assert media_files[0].endswith(".png"), f"Expected .png extension, got {media_files[0]}"
     assert not media_files[0].endswith("?token=xyz")
     assert not media_files[0].endswith(".bin")
+
+
+def test_guess_media_extension_prefers_mimetype():
+    assert guess_media_extension({"mimetype": "image/png"}, "https://example.com/file?x=1") == ".png"
+
+
+def test_guess_media_extension_falls_back_to_url():
+    assert guess_media_extension({}, "https://example.com/file.pdf") == ".pdf"
+
+
+def test_guess_media_extension_falls_back_to_bin():
+    assert guess_media_extension({}, "https://example.com/file") == ".bin"

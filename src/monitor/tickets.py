@@ -13,6 +13,21 @@ def _slugify(value: str) -> str:
     return value.strip("-")
 
 
+def guess_media_extension(media: dict, media_url: str) -> str:
+    mimetype = media.get("mimetype")
+    extension = None
+    if mimetype:
+        extension = mimetypes.guess_extension(mimetype)
+
+    if not extension:
+        extension = os.path.splitext(media_url)[1]
+
+    if not extension:
+        extension = ".bin"
+
+    return extension
+
+
 def write_ticket(
     tickets_dir: str,
     group_name: str,
@@ -57,20 +72,7 @@ def write_ticket(
     for index, message in enumerate(media_messages, start=1):
         media_url = message.media["url"]
         data = waha_client.download_media(media_url)
-
-        # Prefer extension from mimetype if available
-        mimetype = message.media.get("mimetype")
-        extension = None
-        if mimetype:
-            extension = mimetypes.guess_extension(mimetype)
-
-        # Fall back to extension from URL if mimetype didn't work
-        if not extension:
-            extension = os.path.splitext(media_url)[1]
-
-        # Final fallback to .bin
-        if not extension:
-            extension = ".bin"
+        extension = guess_media_extension(message.media, media_url)
 
         media_filename = f"adjunto_{index}{extension}"
         with open(os.path.join(folder_path, media_filename), "wb") as f:
